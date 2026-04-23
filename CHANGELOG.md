@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial package scaffolding: `pyproject.toml`, `src/` layout, MIT license.
 - CI workflow: pytest + ruff + mypy on Python 3.11 and 3.12 (macOS + Linux, CPU only).
 - README and CHANGELOG with accurate project status.
+- **C0.2 — units module**: `atmos_jax_common.units` ports the exact ppm ↔ molec/cm³ ↔ kg/bag conversions used by `som-tomas-app/src/box.f` (lines 416, 592, 604–605, 805–806). Exposes physical constants (`R = 8.314`, `N_A = 6.022e23`, `MW_AIR_KG_PER_MOL = 0.0289`) pinned to the Fortran values — not CODATA — so round-trip tolerances stay in single-ULP territory. Also `box_air_mass_kg(boxvol, T, P)` as a sanity-check helper. NumPy-array inputs supported via `np.asarray`. 19 unit tests include line-by-line parity checks against the Fortran formulas.
+- Ruff config adds `RUF002` / `RUF003` to the ignore list — unicode markup (`×`, `↔`, `²`, `³`, `⁻¹`, `—`) is deliberate in docstrings and not an ambiguity hazard.
 
 ## [0.1.0] — planned
 

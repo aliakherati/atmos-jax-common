@@ -70,6 +70,8 @@ select = [
 ignore = [
     "PLR0913",  # too many function arguments — scientific code legitimately has many
     "PLR2004",  # magic numbers — unavoidable in numerical code with physical constants
+    "RUF002",   # "ambiguous" unicode in docstrings (×, ³, ⁻¹, …); we use it deliberately
+    "RUF003",   # same rule for comments
 ]
 
 [tool.ruff.lint.per-file-ignores]
