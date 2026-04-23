@@ -30,7 +30,7 @@ Requires Python ≥ 3.11.
 
 | Module | Purpose | Status |
 |---|---|---|
-| `atmos_jax_common.units` | ppm ↔ molec/cm³ ↔ kg/bag conversions | not started |
+| `atmos_jax_common.units` | ppm ↔ molec/cm³ ↔ kg/bag conversions | alpha (C0.2) |
 | `atmos_jax_common.species` | SOM species-name parser (e.g., `GENSOMG_04_03` → `(C=4, O=3)`) | not started |
 | `atmos_jax_common.real4` | `float64` → `float32` downcast for faithful-mode comparison | not started |
 | `atmos_jax_common.fortran_runner` | Subprocess wrapper: build `box.exe`, run with input, capture outputs | not started |
