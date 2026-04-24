@@ -29,8 +29,40 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Run pytest
-        run: pytest -ra
+      - name: Run pytest (unit tests only)
+        run: pytest -ra --ignore=tests/integration
+
+  integration:
+    name: pytest integration (Fortran, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux always has gfortran via apt; macOS GitHub runners ship
+        # with gfortran pre-installed (from Xcode command-line tools).
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install gfortran (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran make
+      - name: Verify gfortran is available
+        run: gfortran --version
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package with dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run integration tests
+        run: pytest -ra tests/integration
 
   lint:
     name: ruff + mypy

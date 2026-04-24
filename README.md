@@ -63,7 +63,7 @@ for p in result.output_files:
     print(p.relative_to(result.outputs_dir))
 ```
 
-Each `run()` gets its own scratch directory (symlinked source + fresh `outputs/`) so the Fortran's ``STATUS='new'`` ``OPEN`` never collides with prior outputs. See `tests/integration/test_fortran_runner.py` for the canonical input shape. Tests are gated by the ``SOM_TOMAS_APP_SRC`` environment variable and skip cleanly when unset.
+Each `run()` gets its own scratch directory (symlinked source + fresh `outputs/`) so the Fortran's ``STATUS='new'`` ``OPEN`` never collides with prior outputs. See `tests/integration/test_fortran_runner.py` for the canonical input shape. Tests resolve the Fortran source via the vendored `third_party/som-tomas-fortran/` submodule (initialise with `git submodule update --init`); override via `SOM_TOMAS_FORTRAN_SRC=/path/to/src`. Tests skip cleanly when the source or `gfortran` is absent.
 
 ## License
 

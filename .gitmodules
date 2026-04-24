@@ -1,0 +1,3 @@
+[submodule "third_party/som-tomas-fortran"]
+	path = third_party/som-tomas-fortran
+	url = https://github.com/aliakherati/som-tomas-fortran.git

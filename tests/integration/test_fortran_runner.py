@@ -1,7 +1,9 @@
 """Integration tests for the Fortran runner.
 
-Gated by the ``SOM_TOMAS_APP_SRC`` environment variable and by
-``gfortran`` being on PATH. See ``tests/integration/conftest.py``.
+Gated by ``gfortran`` being on PATH and by the Fortran source being
+available — either via the vendored ``third_party/som-tomas-fortran``
+submodule (default) or the ``SOM_TOMAS_FORTRAN_SRC`` environment
+variable override. See ``tests/integration/conftest.py``.
 """
 
 from __future__ import annotations
