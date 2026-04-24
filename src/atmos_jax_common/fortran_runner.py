@@ -290,12 +290,18 @@ def run(
 
 
 def _prepare_scratch(scratch_root: Path, src_path: Path) -> tuple[Path, Path]:
-    """Create the ``scratch_root/{src,outputs}`` layout.
+    """Create the ``scratch_root/{src,outputs}`` layout by copying source files.
 
-    Uses symlinks (not copies) so large mechanism files and static data
-    stay out of the scratch tree. ``scratch_root`` may or may not exist
-    already; either way, ``src`` and ``outputs`` under it are created
-    fresh here.
+    Earlier versions of this helper symlinked source files into the scratch
+    to avoid the copy cost. That failed: ``box.f:425`` opens
+    ``saprc14_rev1.doc`` with ``STATUS='unknown'`` (read/write), so writes
+    through the symlink mutated the real file in ``src_path``. After one
+    run the mutated ``.doc`` caused heap corruption in subsequent runs on
+    Linux glibc (``malloc(): unsorted double linked list corrupted``).
+
+    Copying fully isolates the scratch from the source tree. The ~1.8 MB
+    Fortran source tree copies in milliseconds on SSD; the correctness
+    win is worth it.
     """
     scratch_root.mkdir(parents=True, exist_ok=True)
     mirror_src = scratch_root / "src"
@@ -303,17 +309,16 @@ def _prepare_scratch(scratch_root: Path, src_path: Path) -> tuple[Path, Path]:
 
     if mirror_src.exists():
         shutil.rmtree(mirror_src)
-    mirror_src.mkdir()
-
     if mirror_out.exists():
         # Fresh outputs dir is essential for STATUS='new' semantics.
         shutil.rmtree(mirror_out)
-    mirror_out.mkdir()
 
-    for entry in src_path.iterdir():
-        # Skip the original outputs link or anything Fortran-generated.
-        if entry.name in {"outputs", "scratch"}:
-            continue
-        (mirror_src / entry.name).symlink_to(entry.resolve())
+    shutil.copytree(
+        src_path,
+        mirror_src,
+        ignore=shutil.ignore_patterns("outputs", "scratch", "__pycache__"),
+        symlinks=False,
+    )
+    mirror_out.mkdir()
 
     return mirror_src, mirror_out
