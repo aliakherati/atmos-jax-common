@@ -56,6 +56,9 @@ packages = ["src/atmos_jax_common"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+# Do not lint into the Fortran submodule — it has its own Python scripts
+# (runme.py, postprocessing.py) that are out of scope for this repo.
+extend-exclude = ["third_party"]
 
 [tool.ruff.lint]
 select = [
