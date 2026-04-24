@@ -42,16 +42,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install gfortran-11
-        # gfortran-13 (default on ubuntu-latest) trips a heap-corruption
-        # bug in som-tomas-fortran's TOMAS report_() subroutine that
-        # does not reproduce under gfortran-11 (closer to the 2022-era
-        # toolchain the code was originally built with). Tracking
-        # upstream as a known Fortran-bug; revisit once root-caused.
+      - name: Install gfortran
         run: |
           sudo apt-get update
-          sudo apt-get install -y gfortran-11 make
-          sudo update-alternatives --install /usr/bin/gfortran gfortran /usr/bin/gfortran-11 100
+          sudo apt-get install -y gfortran make
       - name: Verify gfortran is available
         run: gfortran --version
       - name: Set up Python
