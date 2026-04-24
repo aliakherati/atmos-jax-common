@@ -1,27 +1,12 @@
 """Integration tests for the Fortran runner.
 
-Gated by ``gfortran`` being on PATH and by the Fortran source being
-available — either via the vendored ``third_party/som-tomas-fortran``
-submodule (default) or the ``SOM_TOMAS_FORTRAN_SRC`` environment
-variable override. See ``tests/integration/conftest.py``.
-
-Known issue (upstream Fortran, not a runner bug): on Linux glibc
-(gfortran 11, 12, and 13 all reproduce), ``box.exe`` aborts with
-``malloc(): unsorted double linked list corrupted`` somewhere in
-the TOMAS ``report_()`` subroutine. macOS gfortran 15 handles the
-same input without issue. Tests that actually execute ``box.exe``
-are therefore gated behind the ``ATMOS_JAX_COMMON_RUN_FORTRAN``
-environment variable so CI can skip them on Linux while local
-macOS development keeps the full coverage. Set the env var to any
-truthy value to force the run-tests on Linux too (useful when
-iterating on a fix upstream).
+Gated by the ``SOM_TOMAS_APP_SRC`` environment variable and by
+``gfortran`` being on PATH. See ``tests/integration/conftest.py``.
 """
 
 from __future__ import annotations
 
-import os
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -35,44 +20,18 @@ from atmos_jax_common.fortran_runner import (
 
 pytestmark = pytest.mark.fortran
 
-
-def _fortran_runs_enabled() -> bool:
-    """Whether tests that actually invoke ``box.exe`` should run.
-
-    Default true on macOS (where the upstream bug does not manifest),
-    default false elsewhere. Override either direction with the
-    ``ATMOS_JAX_COMMON_RUN_FORTRAN`` env var.
-    """
-    env = os.environ.get("ATMOS_JAX_COMMON_RUN_FORTRAN")
-    if env is not None:
-        return env.lower() not in ("", "0", "false", "no")
-    return sys.platform == "darwin"
-
-
-requires_box_exe_run = pytest.mark.skipif(
-    not _fortran_runs_enabled(),
-    reason=(
-        "box.exe execution skipped: upstream Fortran triggers a "
-        "glibc heap-corruption abort on Linux. Set "
-        "ATMOS_JAX_COMMON_RUN_FORTRAN=1 to force."
-    ),
-)
-
 # A runname that the Fortran is happy to accept and that we can
 # cheaply identify in the outputs directory.
 _RUN_NAME = "integration_test_run"
 
 # Minimal input that drives box.exe end-to-end. Fields are the stdin
-# format read by box.f — first line is the run name, then the scalars
-# in the order box.f reads them. Values mirror som-tomas-fortran's
-# ``src/runme.py`` defaults (known-good) except for a shortened
-# ``endtime`` to keep the CI job fast.
+# format read by box.f: the first line is the run name, then the scalars
+# in the order box.f reads them. Sourced from the sample ``input`` file
+# in som-tomas-app/src, abbreviated for CI speed.
 #
-# Important gotcha: No (background particle concentration, line 19)
-# must not be 0 or 1 — the Fortran's TOMAS initialiser segfaults on
-# Ubuntu/gfortran 13 when given a near-zero number concentration
-# (`report_ → libc_calloc → SIGSEGV`). 50000 is the runme.py default
-# and is stable on both macOS and Linux.
+# Switches chosen for a short, well-defined run:
+# - COAG=0, VWL=0, PWL=0: aerosol microphysics essentially off
+# - GENVOC + OH only; OH=1.5e6; endtime=0.1 h (6 min) for fast tests
 _SHORT_INPUT = f"""{_RUN_NAME}
 0
 0
@@ -91,7 +50,7 @@ _SHORT_INPUT = f"""{_RUN_NAME}
 101325.000
 298.00
 0.20000
-50000.00000
+1.00000
 0.10000
 1.800
 1
@@ -117,7 +76,6 @@ def test_build_produces_box_exe(built_box: Path) -> None:
     assert built_box.name == "box.exe"
 
 
-@requires_box_exe_run
 def test_run_returns_runoutputs_with_expected_files(som_tomas_src: Path, built_box: Path) -> None:
     assert built_box.is_file()  # consume the fixture
     outputs = run(som_tomas_src, _SHORT_INPUT)
@@ -148,7 +106,6 @@ def test_run_returns_runoutputs_with_expected_files(som_tomas_src: Path, built_b
     shutil.rmtree(outputs.scratch_dir, ignore_errors=True)
 
 
-@requires_box_exe_run
 def test_run_writes_nonempty_gc_file(som_tomas_src: Path, built_box: Path) -> None:
     assert built_box.is_file()
     outputs = run(som_tomas_src, _SHORT_INPUT)
@@ -160,7 +117,6 @@ def test_run_writes_nonempty_gc_file(som_tomas_src: Path, built_box: Path) -> No
         shutil.rmtree(outputs.scratch_dir, ignore_errors=True)
 
 
-@requires_box_exe_run
 def test_two_sequential_runs_with_same_runname_in_different_scratches(
     som_tomas_src: Path, built_box: Path
 ) -> None:
@@ -200,7 +156,6 @@ def test_run_raises_when_box_exe_is_missing(tmp_path: Path) -> None:
         run(empty, "irrelevant\n")
 
 
-@requires_box_exe_run
 def test_run_raises_fortran_run_error_on_garbage_input(
     som_tomas_src: Path, built_box: Path
 ) -> None:
