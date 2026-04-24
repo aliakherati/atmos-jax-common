@@ -27,13 +27,16 @@ pytestmark = pytest.mark.fortran
 _RUN_NAME = "integration_test_run"
 
 # Minimal input that drives box.exe end-to-end. Fields are the stdin
-# format read by box.f: the first line is the run name, then the scalars
-# in the order box.f reads them. Sourced from the sample ``input`` file
-# in som-tomas-app/src, abbreviated for CI speed.
+# format read by box.f — first line is the run name, then the scalars
+# in the order box.f reads them. Values mirror som-tomas-fortran's
+# ``src/runme.py`` defaults (known-good) except for a shortened
+# ``endtime`` to keep the CI job fast.
 #
-# Switches chosen for a short, well-defined run:
-# - COAG=0, VWL=0, PWL=0: aerosol microphysics essentially off
-# - GENVOC + OH only; OH=1.5e6; endtime=0.1 h (6 min) for fast tests
+# Important gotcha: No (background particle concentration, line 19)
+# must not be 0 or 1 — the Fortran's TOMAS initialiser segfaults on
+# Ubuntu/gfortran 13 when given a near-zero number concentration
+# (`report_ → libc_calloc → SIGSEGV`). 50000 is the runme.py default
+# and is stable on both macOS and Linux.
 _SHORT_INPUT = f"""{_RUN_NAME}
 0
 0
@@ -52,7 +55,7 @@ _SHORT_INPUT = f"""{_RUN_NAME}
 101325.000
 298.00
 0.20000
-1.00000
+50000.00000
 0.10000
 1.800
 1
