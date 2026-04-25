@@ -34,7 +34,7 @@ Requires Python ≥ 3.11.
 | `atmos_jax_common.species` | SOM species-name parser (e.g., `GENSOMG_04_03` → `(C=4, O=3)`) | alpha (C0.3) |
 | `atmos_jax_common.real4` | `float64` → `float32` downcast for faithful-mode comparison | alpha (C0.5) |
 | `atmos_jax_common.fortran_runner` | Subprocess wrapper: build `box.exe`, run with input, capture outputs | alpha (C0.4) |
-| `atmos_jax_common.goldens` | Parser/loader for `_gc.dat`, `_noconc.dat`, `_aemass.dat`, etc. | not started |
+| `atmos_jax_common.goldens` | Parser/loader for `_gc.dat`, `_noconc.dat`, `_aemass.dat`, `_spec.dat`, `_saprcgc.dat` | alpha (C0.6) |
 | `atmos_jax_common.compare` | Tolerance-aware diff primitives (`relative_l2`, correlation, carbon balance) | not started |
 
 Tracked in the master plan at `~/.claude/plans/enchanted-exploring-dewdrop.md` (owner's local) as chunks `C0.0` … `C0.10`.
