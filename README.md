@@ -35,9 +35,27 @@ Requires Python ≥ 3.11.
 | `atmos_jax_common.real4` | `float64` → `float32` downcast for faithful-mode comparison | alpha (C0.5) |
 | `atmos_jax_common.fortran_runner` | Subprocess wrapper: build `box.exe`, run with input, capture outputs | alpha (C0.4) |
 | `atmos_jax_common.goldens` | Parser/loader for `_gc.dat`, `_noconc.dat`, `_aemass.dat`, `_spec.dat`, `_saprcgc.dat` | alpha (C0.6) |
-| `atmos_jax_common.compare` | Tolerance-aware diff primitives (`relative_l2`, correlation, carbon balance) | not started |
+| `atmos_jax_common.compare` | Tolerance-aware diff primitives (`relative_l2`, correlation, carbon balance) + `DiffReport` dataclass | alpha (C0.7) |
 
 Tracked in the master plan at `~/.claude/plans/enchanted-exploring-dewdrop.md` (owner's local) as chunks `C0.0` … `C0.10`.
+
+### Figures
+
+Each scientific chunk that ships data or numerical logic ships matplotlib figures under `docs/figures/<chunk-id>/`, regenerable via `scripts/make_<chunk>_figures.py`.
+
+**C0.6 — goldens loader**
+
+| File | What it shows |
+|---|---|
+| [`docs/figures/c0.6/loaded_run_overview.png`](docs/figures/c0.6/loaded_run_overview.png) | 4-panel render of a `GoldenRun` parsed from the committed sample fixture: (a) gas-phase trajectories of the four BL20 first-gen products, (b) per-bin number concentration at `t_final`, (c) total aerosol mass over time, (d) SOM (C, O) grid coloured by `c*`. Demonstrates that the loader exposes every piece a regression test needs. |
+
+**C0.7 — compare primitives**
+
+| File | What it shows |
+|---|---|
+| [`docs/figures/c0.7/diff_report_demo.png`](docs/figures/c0.7/diff_report_demo.png) | A synthetic Fortran-vs-JAX scenario: take the sample fixture as the reference, add a 5% bias to one species + 0.1% noise to the rest, render the resulting `DiffReport`. Top: per-species relative L2 with the master-plan tolerance line; the offending species highlighted red. Bottom: candidate-vs-reference overlay for the worst species. |
+
+To regenerate: `python scripts/make_c0.6_figures.py` and `python scripts/make_c0.7_figures.py` (requires `pip install -e ".[dev]"`).
 
 ## Relationship to the Fortran reference
 
