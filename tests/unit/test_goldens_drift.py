@@ -169,3 +169,25 @@ def test_added_or_removed_files_are_caught(gg, tmp_path: Path) -> None:
     # b is missing run_gc.dat
     diffs = gg._diff_dirs(a, b)
     assert any("files removed" in d for d in diffs)
+
+
+def test_aerosol_files_are_ignored(gg, tmp_path: Path) -> None:
+    """``_aemass.dat`` / ``_noconc.dat`` come from TOMAS, which has its
+    own cross-machine reproducibility issues unrelated to SAPRC
+    chemistry. The drift guard ignores them; tomas-jax will gate
+    aerosol regression separately when it lands."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    # Wildly different aerosol output — would catastrophically fail
+    # numeric comparison if it ran.
+    _write_dat(a / "run_aemass.dat", np.zeros((3, 4)))
+    _write_dat(b / "run_aemass.dat", np.full((3, 4), 1e6))
+    _write_dat(a / "run_noconc.dat", np.zeros((3, 4)))
+    _write_dat(b / "run_noconc.dat", np.full((3, 4), np.nan))
+    # Chemistry file matches — no drift expected.
+    arr = np.linspace(0.01, 1.0, 12).reshape(3, 4)
+    _write_dat(a / "run_saprcgc.dat", arr)
+    _write_dat(b / "run_saprcgc.dat", arr)
+    assert gg._diff_dirs(a, b) == []

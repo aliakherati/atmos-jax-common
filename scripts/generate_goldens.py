@@ -152,6 +152,26 @@ def run_box(src_dir: Path, input_text: str):
 _DRIFT_RTOL = 1e-4
 _DRIFT_ATOL = 1e-30
 
+# Chemistry-relevant output files that the drift guard compares
+# numerically. Outputs not in this set are ignored — specifically the
+# aerosol-side files (``_aemass.dat``, ``_noconc.dat``, ``<run>.dat``,
+# ``_tau.dat``, ``_vl.dat``, ``_kw.dat``) come out of TOMAS, which has
+# its own cross-machine reproducibility issues (see upstream
+# som-tomas-fortran#1 / U1) and isn't the signal we want to gate on
+# for SAPRC mechanism drift. When tomas-jax lands and TOMAS
+# regression coverage matters, we'll add a separate aerosol-drift
+# guard with appropriate per-file atols.
+_CHEMISTRY_DRIFT_FILES_SUFFIXES = ("_saprcgc.dat", "_gc.dat")
+_BYTE_EQUAL_SUFFIXES = (".input", "_spec.dat")
+
+
+def _is_chemistry_drift_file(name: str) -> bool:
+    return any(name.endswith(s) for s in _CHEMISTRY_DRIFT_FILES_SUFFIXES)
+
+
+def _is_byte_equal_file(name: str) -> bool:
+    return any(name.endswith(s) for s in _BYTE_EQUAL_SUFFIXES)
+
 
 def _try_loadtxt(path: Path) -> np.ndarray | None:
     """Return ``path`` parsed as a 2-D float matrix, or ``None`` if it
@@ -166,24 +186,36 @@ def _try_loadtxt(path: Path) -> np.ndarray | None:
 def _diff_dirs(committed: Path, fresh: Path) -> list[str]:
     """Return a list of human-readable drift descriptions.
 
-    Numeric ``.dat`` files are compared with :data:`_DRIFT_RTOL` relative
-    tolerance via :func:`np.allclose` — byte equality is too strict
-    because REAL*4 chemistry products carry float32 ULP noise that
-    re-orders across gfortran versions and CPU architectures. Text
-    files (``.input``, ``_spec.dat``) keep byte equality since they're
-    fully deterministic.
+    Three classes of files:
 
-    ``metadata.json`` is excluded (its ``generated_at_utc`` field
-    intentionally changes every run); we cross-check the SHA fields
-    separately, which catches mechanism / input drift without touching
-    the timestamp.
+    - **Chemistry numeric** (``_saprcgc.dat``, ``_gc.dat``): compared
+      with :data:`_DRIFT_RTOL` relative tolerance via
+      :func:`np.allclose`. Byte equality is too strict because REAL*4
+      chemistry products carry float32 ULP noise that re-orders across
+      gfortran versions and CPU architectures.
+    - **Byte-equal text** (``.input``, ``_spec.dat``): byte equality
+      preserved (these are fully deterministic).
+    - **Aerosol / solver metadata** (everything else): ignored. The
+      aerosol pipeline (``_aemass.dat``, ``_noconc.dat``, etc.) has
+      cross-machine reproducibility issues unrelated to SAPRC
+      chemistry; tomas-jax regression coverage will gate those
+      separately.
+
+    ``metadata.json`` is excluded from byte/numeric comparison (its
+    ``generated_at_utc`` changes every run by design); we cross-check
+    its SHA fields, which catches mechanism / input drift directly.
     """
     diffs: list[str] = []
     committed_files = {p.name for p in committed.iterdir() if p.is_file()}
     fresh_files = {p.name for p in fresh.iterdir() if p.is_file()}
 
-    only_committed = committed_files - fresh_files - {"metadata.json"}
-    only_fresh = fresh_files - committed_files - {"metadata.json"}
+    # Adding/removing chemistry-relevant or byte-equal files counts as
+    # drift; aerosol-side files don't.
+    def _gate(names: set[str]) -> set[str]:
+        return {n for n in names if _is_chemistry_drift_file(n) or _is_byte_equal_file(n)}
+
+    only_committed = _gate(committed_files - fresh_files - {"metadata.json"})
+    only_fresh = _gate(fresh_files - committed_files - {"metadata.json"})
 
     if only_committed:
         diffs.append(f"  files removed: {sorted(only_committed)}")
@@ -192,28 +224,31 @@ def _diff_dirs(committed: Path, fresh: Path) -> list[str]:
 
     common = (committed_files & fresh_files) - {"metadata.json"}
     for name in sorted(common):
+        if not (_is_chemistry_drift_file(name) or _is_byte_equal_file(name)):
+            continue  # aerosol / solver metadata — not a drift signal here
         a_path = committed / name
         b_path = fresh / name
         if filecmp.cmp(a_path, b_path, shallow=False):
             continue
-        # Bytes differ — try numeric tolerance for ``.dat`` files.
-        if name.endswith(".dat"):
+        if _is_chemistry_drift_file(name):
             a_arr = _try_loadtxt(a_path)
             b_arr = _try_loadtxt(b_path)
             if a_arr is not None and b_arr is not None:
                 if a_arr.shape != b_arr.shape:
                     diffs.append(f"  shape differs: {name} ({a_arr.shape} vs {b_arr.shape})")
                     continue
-                if np.allclose(a_arr, b_arr, rtol=_DRIFT_RTOL, atol=_DRIFT_ATOL):
+                if np.allclose(a_arr, b_arr, rtol=_DRIFT_RTOL, atol=_DRIFT_ATOL, equal_nan=False):
                     continue  # within tolerance → not drift
-                # Compute the worst-case relative diff for the message.
                 denom = np.maximum(np.abs(a_arr), _DRIFT_ATOL)
-                worst = float(np.max(np.abs(a_arr - b_arr) / denom))
+                with np.errstate(invalid="ignore"):
+                    worst = float(np.nanmax(np.abs(a_arr - b_arr) / denom))
                 diffs.append(
                     f"  numeric drift: {name} (max rel diff {worst:.2e} > rtol {_DRIFT_RTOL:.0e})"
                 )
                 continue
-        # Non-numeric or unloadable — fall back to byte diff.
+            diffs.append(f"  numeric load failed: {name}")
+            continue
+        # Byte-equal text file that differs → drift.
         diffs.append(f"  bytes differ: {name}")
 
     # Compare metadata.json by SHAs only (not timestamp).
