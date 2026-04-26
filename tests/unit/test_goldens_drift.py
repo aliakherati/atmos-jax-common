@@ -115,9 +115,7 @@ def restore_render(gg):
 def test_unchanged_source_and_manifest_have_no_drift(gg, tmp_path: Path, restore_render) -> None:
     rendered = "manifest input text v1\n"
     src_files = {"box.f": "C box.f stub\n", "integr2.f": "C integr2.f stub\n"}
-    env, _ = _make_run_with_metadata(
-        gg, tmp_path, src_files=src_files, rendered_input=rendered
-    )
+    env, _ = _make_run_with_metadata(gg, tmp_path, src_files=src_files, rendered_input=rendered)
     src_dir, expected_dir, run, shared = env
     assert gg._check_run_contract(run, shared, src_dir, expected_dir) == []
 
