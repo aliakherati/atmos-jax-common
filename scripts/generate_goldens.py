@@ -20,9 +20,15 @@ Modes
     Writes outputs + metadata into ``data/canonical_runs/expected/``.
 ``--check``
     Generates into a scratch dir and diffs every committed output file
-    against the freshly-produced one. Exits non-zero on any byte
-    difference. ``metadata.json`` is excluded from the diff (its
-    ``generated_at_utc`` field changes every run by design).
+    against the freshly-produced one. Numeric ``.dat`` files are
+    compared with relative tolerance ``rtol=1e-4`` (float32 ULP-level
+    noise from the REAL*4 chemistry callback re-orders across
+    gfortran versions and CPU architectures and is intentionally
+    accepted); text files (``.input``, ``_spec.dat``) keep byte
+    equality. Real Fortran source changes shift cascade species by
+    ≥0.1% — well above tolerance — and are caught. Exits non-zero on
+    any drift. ``metadata.json``'s ``generated_at_utc`` is excluded;
+    its SHA fields are cross-checked.
 ``--only RUN_ID [RUN_ID ...]``
     Restrict to a subset of run IDs (faster local iteration; CI uses the
     full matrix).
@@ -40,6 +46,8 @@ import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+
+import numpy as np
 
 from atmos_jax_common.canonical_runs import (
     CanonicalMatrix,
@@ -131,12 +139,44 @@ def run_box(src_dir: Path, input_text: str):
     return result
 
 
+# Tolerance for cross-machine numerical drift on the committed Fortran
+# outputs. The Fortran chemistry callback DIFUN runs in REAL*4
+# (per the integr2.f bridge), and the resulting RKZ*C*C products carry
+# float32 ULP noise (~1e-7 relative). Different gfortran versions and
+# CPU architectures reorder those products slightly, so two cleanly-
+# built copies of the same source can land at ~1e-5 relative apart on
+# cascade species. We accept that as "no drift" and only flag genuine
+# Fortran source changes (which produce ≥0.1% shifts on at least one
+# species). Tolerance is per-element via np.allclose, atol-floored so
+# zero-reference cells (initial-condition columns) compare cleanly.
+_DRIFT_RTOL = 1e-4
+_DRIFT_ATOL = 1e-30
+
+
+def _try_loadtxt(path: Path) -> np.ndarray | None:
+    """Return ``path`` parsed as a 2-D float matrix, or ``None`` if it
+    isn't pure-numeric (e.g., ``_spec.dat`` carries species names)."""
+    try:
+        arr = np.loadtxt(path, ndmin=2)
+        return arr
+    except (ValueError, OSError):
+        return None
+
+
 def _diff_dirs(committed: Path, fresh: Path) -> list[str]:
     """Return a list of human-readable drift descriptions.
 
-    ``metadata.json`` is excluded from the diff (its ``generated_at_utc``
-    field intentionally changes every run; the auditable parts of
-    metadata are the SHAs, which are checked separately by C0.10).
+    Numeric ``.dat`` files are compared with :data:`_DRIFT_RTOL` relative
+    tolerance via :func:`np.allclose` — byte equality is too strict
+    because REAL*4 chemistry products carry float32 ULP noise that
+    re-orders across gfortran versions and CPU architectures. Text
+    files (``.input``, ``_spec.dat``) keep byte equality since they're
+    fully deterministic.
+
+    ``metadata.json`` is excluded (its ``generated_at_utc`` field
+    intentionally changes every run); we cross-check the SHA fields
+    separately, which catches mechanism / input drift without touching
+    the timestamp.
     """
     diffs: list[str] = []
     committed_files = {p.name for p in committed.iterdir() if p.is_file()}
@@ -152,8 +192,29 @@ def _diff_dirs(committed: Path, fresh: Path) -> list[str]:
 
     common = (committed_files & fresh_files) - {"metadata.json"}
     for name in sorted(common):
-        if not filecmp.cmp(committed / name, fresh / name, shallow=False):
-            diffs.append(f"  bytes differ: {name}")
+        a_path = committed / name
+        b_path = fresh / name
+        if filecmp.cmp(a_path, b_path, shallow=False):
+            continue
+        # Bytes differ — try numeric tolerance for ``.dat`` files.
+        if name.endswith(".dat"):
+            a_arr = _try_loadtxt(a_path)
+            b_arr = _try_loadtxt(b_path)
+            if a_arr is not None and b_arr is not None:
+                if a_arr.shape != b_arr.shape:
+                    diffs.append(f"  shape differs: {name} ({a_arr.shape} vs {b_arr.shape})")
+                    continue
+                if np.allclose(a_arr, b_arr, rtol=_DRIFT_RTOL, atol=_DRIFT_ATOL):
+                    continue  # within tolerance → not drift
+                # Compute the worst-case relative diff for the message.
+                denom = np.maximum(np.abs(a_arr), _DRIFT_ATOL)
+                worst = float(np.max(np.abs(a_arr - b_arr) / denom))
+                diffs.append(
+                    f"  numeric drift: {name} (max rel diff {worst:.2e} > rtol {_DRIFT_RTOL:.0e})"
+                )
+                continue
+        # Non-numeric or unloadable — fall back to byte diff.
+        diffs.append(f"  bytes differ: {name}")
 
     # Compare metadata.json by SHAs only (not timestamp).
     if (committed / "metadata.json").exists() and (fresh / "metadata.json").exists():
