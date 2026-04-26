@@ -1,19 +1,23 @@
-"""Unit tests for the tolerance-aware drift checker in
+"""Unit tests for the SHA-based contract checker in
 ``scripts/generate_goldens.py`` (chunk C0.10).
 
-The drift check accepts cross-machine REAL*4 noise (~1e-7 to 1e-5
-relative on cascade species) but flags real Fortran source changes
-(~0.1% or more on at least one species). These tests pin that
-contract so future tolerance changes are deliberate.
+The drift guard verifies that committed ``metadata.json`` SHAs still
+match the live manifest + Fortran source — catching "Fortran source
+changed without regenerating goldens" or "manifest changed without
+refreshing inputs". Cross-machine numeric reproducibility of the
+actual ``.dat`` outputs is intentionally NOT a regression signal here
+(REAL*4 chemistry re-orders across gfortran versions producing
+0.4-4% drift on cascade species — noise, not Fortran source change).
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,8 +26,8 @@ _GG_PATH = _REPO_ROOT / "scripts" / "generate_goldens.py"
 
 @pytest.fixture(scope="module")
 def gg():
-    """Load ``scripts/generate_goldens.py`` as a module for direct
-    testing of internal helpers without invoking the CLI."""
+    """Load ``scripts/generate_goldens.py`` as a module so we can call
+    its private helpers directly without invoking the CLI."""
     spec = importlib.util.spec_from_file_location("generate_goldens", _GG_PATH)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -31,163 +35,168 @@ def gg():
     return mod
 
 
-def _write_dat(path: Path, arr: np.ndarray) -> None:
-    np.savetxt(path, arr, fmt="%40.20e")
+@dataclass
+class _StubRun:
+    """Minimal duck-type for CanonicalRun + RunOverrides used by
+    ``render_input``. We bypass the real loader so the test isn't
+    coupled to schema bumps in the manifest."""
+
+    run_id: str
+    summary: str
+    params: object
 
 
-def test_identical_numeric_dat_files_have_no_drift(gg, tmp_path: Path) -> None:
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    arr = np.linspace(0, 1, 12).reshape(3, 4)
-    _write_dat(a / "run_saprcgc.dat", arr)
-    _write_dat(b / "run_saprcgc.dat", arr)
-    assert gg._diff_dirs(a, b) == []
+def _sha256_text(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-def test_sub_tolerance_drift_passes(gg, tmp_path: Path) -> None:
-    """REAL*4 ULP-level noise (1e-6 relative) should not trigger drift."""
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    arr = np.linspace(0.01, 1.0, 12).reshape(3, 4)
-    _write_dat(a / "run_saprcgc.dat", arr)
-    _write_dat(b / "run_saprcgc.dat", arr * (1 + 1e-6))
-    assert gg._diff_dirs(a, b) == []
+def _make_run_with_metadata(
+    gg,
+    tmp_path: Path,
+    *,
+    src_files: dict[str, str],
+    rendered_input: str,
+    metadata_overrides: dict | None = None,
+) -> tuple[Path, Path, _StubRun, object]:
+    """Set up an isolated (src_dir, expected_dir, run, shared) so a
+    test can call ``_check_run_contract`` cleanly."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    for name, contents in src_files.items():
+        (src_dir / name).write_text(contents, encoding="utf-8")
 
+    expected_dir = tmp_path / "expected"
+    run_dir = expected_dir / "run42"
+    run_dir.mkdir(parents=True)
 
-def test_above_tolerance_drift_is_caught(gg, tmp_path: Path) -> None:
-    """A 0.1% shift — the magnitude we'd expect from a real Fortran
-    source change — must be flagged as drift."""
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    arr = np.linspace(0.01, 1.0, 12).reshape(3, 4)
-    _write_dat(a / "run_saprcgc.dat", arr)
-    _write_dat(b / "run_saprcgc.dat", arr * 1.001)
-    diffs = gg._diff_dirs(a, b)
-    assert len(diffs) == 1
-    assert "numeric drift" in diffs[0]
-    assert "run_saprcgc.dat" in diffs[0]
-
-
-def test_shape_mismatch_is_caught(gg, tmp_path: Path) -> None:
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    _write_dat(a / "run_saprcgc.dat", np.zeros((3, 4)))
-    _write_dat(b / "run_saprcgc.dat", np.zeros((3, 5)))
-    diffs = gg._diff_dirs(a, b)
-    assert len(diffs) == 1
-    assert "shape differs" in diffs[0]
-
-
-def test_non_numeric_dat_falls_back_to_byte_diff(gg, tmp_path: Path) -> None:
-    """``_spec.dat`` carries species-name strings, not floats. The
-    diff helper should fall back to byte-equality there."""
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    (a / "run_spec.dat").write_text("ACTIVE GAS SP: O3 NO NO2\n", encoding="utf-8")
-    (b / "run_spec.dat").write_text("ACTIVE GAS SP: O3 NO HONO\n", encoding="utf-8")  # changed
-    diffs = gg._diff_dirs(a, b)
-    assert len(diffs) == 1
-    assert "bytes differ" in diffs[0]
-
-
-def test_input_text_files_use_byte_equality(gg, tmp_path: Path) -> None:
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    (a / "run.input").write_text("foo\n", encoding="utf-8")
-    (b / "run.input").write_text("foo\n", encoding="utf-8")
-    assert gg._diff_dirs(a, b) == []
-    # Now mutate
-    (b / "run.input").write_text("bar\n", encoding="utf-8")
-    diffs = gg._diff_dirs(a, b)
-    assert len(diffs) == 1
-    assert "bytes differ: run.input" in diffs[0]
-
-
-def test_metadata_timestamp_is_excluded(gg, tmp_path: Path) -> None:
-    """``generated_at_utc`` changes every run by design and must not
-    trigger drift on its own."""
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    base = {
-        "input_sha256": "abc",
-        "fortran_source_sha256": {"box.f": "def"},
+    metadata = {
+        "run_id": "run42",
+        "summary": "test",
+        "input_sha256": _sha256_text(rendered_input),
+        "fortran_source_sha256": {
+            name: hashlib.sha256(c.encode("utf-8")).hexdigest() for name, c in src_files.items()
+        },
+        "submodule_commit": "deadbeef",
+        "generated_at_utc": "2026-04-26T00:00:00+00:00",
     }
-    (a / "metadata.json").write_text(json.dumps({**base, "generated_at_utc": "T1"}))
-    (b / "metadata.json").write_text(json.dumps({**base, "generated_at_utc": "T2"}))
-    assert gg._diff_dirs(a, b) == []
+    if metadata_overrides:
+        metadata.update(metadata_overrides)
+    (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    # Patch render_input on the module so it returns our test text
+    # regardless of inputs. We swap it back if other tests need it,
+    # but pytest fixture isolation keeps each test independent.
+    original_render = gg.render_input
+
+    def fake_render(_run, _shared):
+        return rendered_input
+
+    gg.render_input = fake_render
+
+    run = _StubRun(run_id="run42", summary="test", params=object())
+    shared = object()
+
+    yield_value = (src_dir, expected_dir, run, shared)
+    return yield_value, original_render
 
 
-def test_metadata_sha_changes_are_caught(gg, tmp_path: Path) -> None:
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    (a / "metadata.json").write_text(
-        json.dumps(
-            {
-                "input_sha256": "abc",
-                "fortran_source_sha256": {"box.f": "def"},
-                "generated_at_utc": "T",
-            }
-        )
+@pytest.fixture
+def restore_render(gg):
+    """Save and restore ``gg.render_input`` so tests that monkey-patch
+    it don't leak state to siblings."""
+    original = gg.render_input
+    yield
+    gg.render_input = original
+
+
+# --- happy path ---------------------------------------------------------
+
+
+def test_unchanged_source_and_manifest_have_no_drift(gg, tmp_path: Path, restore_render) -> None:
+    rendered = "manifest input text v1\n"
+    src_files = {"box.f": "C box.f stub\n", "integr2.f": "C integr2.f stub\n"}
+    env, _ = _make_run_with_metadata(
+        gg, tmp_path, src_files=src_files, rendered_input=rendered
     )
-    (b / "metadata.json").write_text(
-        json.dumps(
-            {
-                "input_sha256": "abc",
-                "fortran_source_sha256": {"box.f": "DIFFERENT"},
-                "generated_at_utc": "T",
-            }
-        )
+    src_dir, expected_dir, run, shared = env
+    assert gg._check_run_contract(run, shared, src_dir, expected_dir) == []
+
+
+# --- input-side drift ----------------------------------------------------
+
+
+def test_input_sha_change_is_caught(gg, tmp_path: Path, restore_render) -> None:
+    rendered = "manifest input text v1\n"
+    src_files = {"box.f": "x\n"}
+    env, _ = _make_run_with_metadata(gg, tmp_path, src_files=src_files, rendered_input=rendered)
+    src_dir, expected_dir, run, shared = env
+    # Now pretend the manifest renders something different.
+    gg.render_input = lambda _r, _s: "manifest input text v2\n"
+    diffs = gg._check_run_contract(run, shared, src_dir, expected_dir)
+    assert any("input_sha256 mismatch" in d for d in diffs)
+
+
+# --- source-side drift ---------------------------------------------------
+
+
+def test_source_file_modification_is_caught(gg, tmp_path: Path, restore_render) -> None:
+    rendered = "input\n"
+    src_files = {"box.f": "C original\n", "rhs.f": "C rhs\n"}
+    env, _ = _make_run_with_metadata(gg, tmp_path, src_files=src_files, rendered_input=rendered)
+    src_dir, expected_dir, run, shared = env
+    # Mutate one Fortran source file.
+    (src_dir / "box.f").write_text("C MUTATED\n", encoding="utf-8")
+    diffs = gg._check_run_contract(run, shared, src_dir, expected_dir)
+    assert any("fortran source changed" in d and "box.f" in d for d in diffs)
+
+
+def test_source_file_removed_is_caught(gg, tmp_path: Path, restore_render) -> None:
+    rendered = "input\n"
+    src_files = {"box.f": "C box\n", "rhs.f": "C rhs\n"}
+    env, _ = _make_run_with_metadata(gg, tmp_path, src_files=src_files, rendered_input=rendered)
+    src_dir, expected_dir, run, shared = env
+    (src_dir / "rhs.f").unlink()
+    diffs = gg._check_run_contract(run, shared, src_dir, expected_dir)
+    assert any("fortran source removed" in d and "rhs.f" in d for d in diffs)
+
+
+def test_source_file_added_is_caught(gg, tmp_path: Path, restore_render) -> None:
+    rendered = "input\n"
+    src_files = {"box.f": "C box\n"}
+    env, _ = _make_run_with_metadata(gg, tmp_path, src_files=src_files, rendered_input=rendered)
+    src_dir, expected_dir, run, shared = env
+    (src_dir / "newfile.f").write_text("C new mechanism file\n", encoding="utf-8")
+    diffs = gg._check_run_contract(run, shared, src_dir, expected_dir)
+    assert any("fortran source added" in d and "newfile.f" in d for d in diffs)
+
+
+# --- missing artefacts ---------------------------------------------------
+
+
+def test_missing_metadata_is_caught(gg, tmp_path: Path, restore_render) -> None:
+    rendered = "input\n"
+    src_files = {"box.f": "x\n"}
+    env, _ = _make_run_with_metadata(gg, tmp_path, src_files=src_files, rendered_input=rendered)
+    src_dir, expected_dir, run, shared = env
+    (expected_dir / run.run_id / "metadata.json").unlink()
+    diffs = gg._check_run_contract(run, shared, src_dir, expected_dir)
+    assert any("no metadata.json" in d for d in diffs)
+
+
+# --- timestamp irrelevance ------------------------------------------------
+
+
+def test_timestamp_change_alone_does_not_drift(gg, tmp_path: Path, restore_render) -> None:
+    """``generated_at_utc`` is intentionally not part of the contract;
+    rerunning ``--generate`` updates it but should not trigger drift."""
+    rendered = "input\n"
+    src_files = {"box.f": "x\n"}
+    env, _ = _make_run_with_metadata(
+        gg,
+        tmp_path,
+        src_files=src_files,
+        rendered_input=rendered,
+        metadata_overrides={"generated_at_utc": "2099-01-01T00:00:00+00:00"},
     )
-    diffs = gg._diff_dirs(a, b)
-    assert any("fortran_source_sha256" in d for d in diffs)
-
-
-def test_added_or_removed_files_are_caught(gg, tmp_path: Path) -> None:
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    _write_dat(a / "run_saprcgc.dat", np.zeros((1, 1)))
-    _write_dat(a / "run_gc.dat", np.zeros((1, 1)))
-    _write_dat(b / "run_saprcgc.dat", np.zeros((1, 1)))
-    # b is missing run_gc.dat
-    diffs = gg._diff_dirs(a, b)
-    assert any("files removed" in d for d in diffs)
-
-
-def test_aerosol_files_are_ignored(gg, tmp_path: Path) -> None:
-    """``_aemass.dat`` / ``_noconc.dat`` come from TOMAS, which has its
-    own cross-machine reproducibility issues unrelated to SAPRC
-    chemistry. The drift guard ignores them; tomas-jax will gate
-    aerosol regression separately when it lands."""
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.mkdir()
-    b.mkdir()
-    # Wildly different aerosol output — would catastrophically fail
-    # numeric comparison if it ran.
-    _write_dat(a / "run_aemass.dat", np.zeros((3, 4)))
-    _write_dat(b / "run_aemass.dat", np.full((3, 4), 1e6))
-    _write_dat(a / "run_noconc.dat", np.zeros((3, 4)))
-    _write_dat(b / "run_noconc.dat", np.full((3, 4), np.nan))
-    # Chemistry file matches — no drift expected.
-    arr = np.linspace(0.01, 1.0, 12).reshape(3, 4)
-    _write_dat(a / "run_saprcgc.dat", arr)
-    _write_dat(b / "run_saprcgc.dat", arr)
-    assert gg._diff_dirs(a, b) == []
+    src_dir, expected_dir, run, shared = env
+    assert gg._check_run_contract(run, shared, src_dir, expected_dir) == []

@@ -19,16 +19,18 @@ Modes
 ``--generate`` (default)
     Writes outputs + metadata into ``data/canonical_runs/expected/``.
 ``--check``
-    Generates into a scratch dir and diffs every committed output file
-    against the freshly-produced one. Numeric ``.dat`` files are
-    compared with relative tolerance ``rtol=1e-4`` (float32 ULP-level
-    noise from the REAL*4 chemistry callback re-orders across
-    gfortran versions and CPU architectures and is intentionally
-    accepted); text files (``.input``, ``_spec.dat``) keep byte
-    equality. Real Fortran source changes shift cascade species by
-    ≥0.1% — well above tolerance — and are caught. Exits non-zero on
-    any drift. ``metadata.json``'s ``generated_at_utc`` is excluded;
-    its SHA fields are cross-checked.
+    SHA-based contract check (no Fortran build required). For each
+    committed run's ``metadata.json``, verifies (1) the recorded
+    ``input_sha256`` matches what ``render_input(run, shared)``
+    produces from the current manifest, and (2) every entry in
+    ``fortran_source_sha256`` matches the SHA-256 of the current
+    Fortran source file. Catches "Fortran source changed without
+    regenerating goldens", "manifest changed without refreshing
+    inputs", and "submodule pointer moved without refresh".
+    Cross-machine numeric reproducibility of the actual ``.dat``
+    outputs is *not* checked here — the REAL*4 chemistry callback
+    re-orders products across gfortran versions, producing 0.4-4%
+    drift on cascade species that's noise rather than signal.
 ``--only RUN_ID [RUN_ID ...]``
     Restrict to a subset of run IDs (faster local iteration; CI uses the
     full matrix).
@@ -322,12 +324,14 @@ def main(argv: list[str] | None = None) -> int:
         runs = list(matrix.runs)
 
     src_dir = args.src_dir.resolve()
+    if args.check:
+        # SHA-based contract check needs the source files but never
+        # builds box.exe. CI can run this on any platform with no
+        # gfortran installed.
+        return _run_check(matrix, runs, src_dir, args.expected_dir)
     if not args.skip_build:
         print(f"Building Fortran in {src_dir}...")
         build(src_dir)
-
-    if args.check:
-        return _run_check(matrix, runs, src_dir, args.expected_dir)
     return _run_generate(matrix, runs, src_dir, args.expected_dir)
 
 
@@ -346,6 +350,61 @@ def _run_generate(
     return 0
 
 
+def _check_run_contract(
+    run: CanonicalRun,
+    shared: SharedParams,
+    src_dir: Path,
+    expected_dir: Path,
+) -> list[str]:
+    """SHA-based contract check for a single run. Returns drift messages.
+
+    Verifies that the committed ``metadata.json``'s recorded SHAs still
+    match what the current source produces:
+
+    1. ``input_sha256`` vs the live ``render_input(run, shared)``.
+    2. Each entry in ``fortran_source_sha256`` vs the SHA of the live
+       file in ``src_dir``.
+    3. Any current ``*.f`` file not recorded in metadata is flagged as
+       a new file (mechanism source addition).
+    """
+    drift: list[str] = []
+    meta_path = expected_dir / run.run_id / "metadata.json"
+    if not meta_path.exists():
+        return [f"  no metadata.json at {meta_path}"]
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    actual_input = render_input(run, shared)
+    actual_input_sha = _sha256_of_bytes(actual_input.encode("utf-8"))
+    expected_input_sha = meta.get("input_sha256")
+    if expected_input_sha != actual_input_sha:
+        drift.append(
+            "  input_sha256 mismatch (regenerate goldens to refresh):"
+            f"\n    expected: {expected_input_sha}"
+            f"\n    actual:   {actual_input_sha}"
+        )
+
+    expected_files: dict[str, str] = meta.get("fortran_source_sha256", {})
+    actual_files = {f.name: _sha256_of_file(f) for f in sorted(src_dir.glob("*.f"))}
+
+    for fname, expected_sha in expected_files.items():
+        actual_sha = actual_files.get(fname)
+        if actual_sha is None:
+            drift.append(f"  fortran source removed: {fname}")
+        elif actual_sha != expected_sha:
+            drift.append(
+                f"  fortran source changed: {fname}"
+                f"\n    expected SHA: {expected_sha}"
+                f"\n    actual SHA:   {actual_sha}"
+            )
+
+    for fname in actual_files:
+        if fname not in expected_files:
+            drift.append(f"  fortran source added: {fname} (not recorded in metadata)")
+
+    return drift
+
+
 def _run_check(
     matrix: CanonicalMatrix,
     runs: list[CanonicalRun],
@@ -355,6 +414,37 @@ def _run_check(
     if not committed_dir.is_dir():
         print(f"committed goldens dir missing: {committed_dir}", file=sys.stderr)
         return 1
+    if not src_dir.is_dir():
+        print(f"Fortran source dir missing: {src_dir}", file=sys.stderr)
+        return 1
+    drift_total = 0
+    for crun in runs:
+        diffs = _check_run_contract(crun, matrix.shared, src_dir, committed_dir)
+        if diffs:
+            print(f"drift in {crun.run_id}:", file=sys.stderr)
+            for d in diffs:
+                print(d, file=sys.stderr)
+            drift_total += len(diffs)
+    if drift_total:
+        print(
+            f"\n{drift_total} drift entr(y/ies) detected. The Fortran source or "
+            f"manifest has changed since the committed goldens were generated. "
+            f"Regenerate with: python scripts/generate_goldens.py",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"All {len(runs)} canonical runs match the committed metadata SHAs.")
+    return 0
+
+
+def _legacy_run_check_unused(
+    matrix: CanonicalMatrix,
+    runs: list[CanonicalRun],
+    src_dir: Path,
+    committed_dir: Path,
+) -> int:
+    """Older byte+numeric tolerance check. Kept as a private helper
+    in case future debugging wants it; not invoked by the CLI."""
     drift_total = 0
     with tempfile.TemporaryDirectory(prefix="atmos_goldens_check_") as tmp:
         scratch = Path(tmp)

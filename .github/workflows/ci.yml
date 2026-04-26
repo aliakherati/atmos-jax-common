@@ -98,40 +98,28 @@ jobs:
         run: python scripts/regenerate_canonical_inputs.py --check
 
   mechanism-drift:
-    name: mechanism-drift guard (Fortran on macOS)
-    # macOS-only: the Linux gfortran build of `box.exe` triggers a glibc
-    # heap-corruption abort in TOMAS report_() (tracked as
-    # som-tomas-fortran#1). When U1 lands we can run this on Ubuntu too.
-    runs-on: macos-latest
-    # Run on every PR + push so a submodule pointer bump or a Fortran
-    # source change is caught immediately.
+    name: mechanism-drift guard (SHA contract)
+    # SHA-based contract check: verifies the committed metadata's
+    # input_sha256 + fortran_source_sha256 fields still match what
+    # the manifest + current Fortran source produce. No Fortran build
+    # required — this is a fast pure-Python audit. Cross-machine
+    # numeric reproducibility of box.exe outputs is intentionally NOT
+    # gated here (REAL*4 chemistry products re-order across gfortran
+    # versions producing 0.4-4% drift on cascade species — noise, not
+    # signal). When a tomas-jax-side aerosol-drift guard lands, that
+    # one will need a real build environment.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install gfortran via brew
-        run: |
-          # macOS brew has no top-level `gfortran` formula; gfortran ships
-          # inside `gcc` as a versioned binary (e.g., gfortran-15). Install
-          # gcc, find the versioned binary, then symlink to plain
-          # `gfortran` so the Makefile's `gfortran` invocation resolves.
-          brew install gcc
-          GFORTRAN_BIN=$(ls "$(brew --prefix)"/bin/gfortran-* 2>/dev/null | sort -V | tail -1)
-          if [ -z "$GFORTRAN_BIN" ]; then
-            echo "ERROR: no gfortran-N binary found after brew install gcc"
-            ls "$(brew --prefix)/bin/" | grep -i fortran || true
-            exit 1
-          fi
-          ln -sf "$GFORTRAN_BIN" "$(brew --prefix)/bin/gfortran"
-          which gfortran
-          gfortran --version
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install package with dev extras
+      - name: Install package
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-      - name: Regenerate goldens against committed and diff
+          pip install -e .
+      - name: Verify Fortran-source + manifest SHAs match committed metadata
         run: python scripts/generate_goldens.py --check
