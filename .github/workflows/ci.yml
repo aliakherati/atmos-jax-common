@@ -111,8 +111,20 @@ jobs:
           submodules: recursive
       - name: Install gfortran via brew
         run: |
-          brew install gfortran || brew install gcc
-          which gfortran && gfortran --version
+          # macOS brew has no top-level `gfortran` formula; gfortran ships
+          # inside `gcc` as a versioned binary (e.g., gfortran-15). Install
+          # gcc, find the versioned binary, then symlink to plain
+          # `gfortran` so the Makefile's `gfortran` invocation resolves.
+          brew install gcc
+          GFORTRAN_BIN=$(ls "$(brew --prefix)"/bin/gfortran-* 2>/dev/null | sort -V | tail -1)
+          if [ -z "$GFORTRAN_BIN" ]; then
+            echo "ERROR: no gfortran-N binary found after brew install gcc"
+            ls "$(brew --prefix)/bin/" | grep -i fortran || true
+            exit 1
+          fi
+          ln -sf "$GFORTRAN_BIN" "$(brew --prefix)/bin/gfortran"
+          which gfortran
+          gfortran --version
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
