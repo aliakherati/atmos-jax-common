@@ -1,0 +1,146 @@
+{
+  "$schema_version": 1,
+  "description": "Canonical-run matrix v0.1 for the SOM-TOMAS Fortran reference. Each run is a configuration of `box.exe` covering a corner of the gas-phase chemistry coverage space (time scale, OH dose, VOC magnitude, temperature). Used by `scripts/generate_goldens.py` to produce committed reference outputs and by the mechanism-drift CI guard to detect upstream Fortran changes. Matrix design is open to revision when master plan Q5 is answered.",
+  "shared_params": {
+    "comment": "Constants across the matrix. The varying axes live in `runs[].params` overrides.",
+    "switches": {
+      "COAG": 0,
+      "VWL": 0,
+      "PWL": 0
+    },
+    "rates": {
+      "ke": 0.075,
+      "kw0": 0.0
+    },
+    "box": {
+      "nucrate_per_cm3_per_s": 0.0,
+      "dilution_rate": 0.0,
+      "boxvol_cm3": 7000000.0,
+      "pres_Pa": 101325.0,
+      "rh": 0.20
+    },
+    "particles": {
+      "alpha": 0.001,
+      "Dbk_m2_per_s": 1.0e-10,
+      "kc_per_s": 0.0,
+      "storg_N_per_m": 0.025,
+      "No_per_cm3": 50000.0,
+      "Dpm_um": 0.10,
+      "sigma": 1.10
+    },
+    "emissions": {
+      "precspemiss": 1,
+      "ninpprec": 1,
+      "precname": "GENVOC",
+      "preclenname": 6,
+      "oxyspemiss": 0
+    },
+    "som": {
+      "nsomprec": 1,
+      "somprecname": "GENSOMG",
+      "dlvp": 1.910
+    }
+  },
+  "runs": [
+    {
+      "run_id": "short_baseline",
+      "summary": "10-min, OH=1.5e6, GENVOC=0.05 ppm, T=298 K. Identical to the som-jax S1.10 fixture; smoke test for the matrix.",
+      "params": {
+        "endtime_h": 0.166,
+        "OH_molec_per_cm3": 1.5e6,
+        "ippmprec_ppm": 0.050,
+        "temp_K": 298.0
+      }
+    },
+    {
+      "run_id": "medium_baseline",
+      "summary": "1-hour run at baseline OH and GENVOC. First-generation cascade fully populated; second-generation visible.",
+      "params": {
+        "endtime_h": 1.000,
+        "OH_molec_per_cm3": 1.5e6,
+        "ippmprec_ppm": 0.050,
+        "temp_K": 298.0
+      }
+    },
+    {
+      "run_id": "long_baseline",
+      "summary": "4-hour run at baseline OH and GENVOC. Matches `runme.py` default; deeper cascade populated.",
+      "params": {
+        "endtime_h": 4.000,
+        "OH_molec_per_cm3": 1.5e6,
+        "ippmprec_ppm": 0.050,
+        "temp_K": 298.0
+      }
+    },
+    {
+      "run_id": "very_long",
+      "summary": "24-hour run at baseline OH and GENVOC. Stress test for integrator stability and float32 noise accumulation in DIFUN's RKZ*C*C products. Longest run in the matrix.",
+      "params": {
+        "endtime_h": 24.000,
+        "OH_molec_per_cm3": 1.5e6,
+        "ippmprec_ppm": 0.050,
+        "temp_K": 298.0
+      }
+    },
+    {
+      "run_id": "low_oh",
+      "summary": "4-hour run with OH = 5e5 molec/cm3 (1/3x baseline). Slower oxidation; tests rate-constant scaling and per-step convergence at low rates.",
+      "params": {
+        "endtime_h": 4.000,
+        "OH_molec_per_cm3": 5.0e5,
+        "ippmprec_ppm": 0.050,
+        "temp_K": 298.0
+      }
+    },
+    {
+      "run_id": "high_oh",
+      "summary": "4-hour run with OH = 5e6 molec/cm3 (~3.3x baseline). Faster oxidation; tests stiff-regime convergence under aggressive rates.",
+      "params": {
+        "endtime_h": 4.000,
+        "OH_molec_per_cm3": 5.0e6,
+        "ippmprec_ppm": 0.050,
+        "temp_K": 298.0
+      }
+    },
+    {
+      "run_id": "low_voc",
+      "summary": "4-hour run with GENVOC = 0.005 ppm (1/10x baseline). Tests behaviour near integrator atol; small absolute concentrations stress floor handling.",
+      "params": {
+        "endtime_h": 4.000,
+        "OH_molec_per_cm3": 1.5e6,
+        "ippmprec_ppm": 0.005,
+        "temp_K": 298.0
+      }
+    },
+    {
+      "run_id": "high_voc",
+      "summary": "4-hour run with GENVOC = 0.5 ppm (10x baseline). Tests linearity of rate equations across two orders of magnitude in initial concentration.",
+      "params": {
+        "endtime_h": 4.000,
+        "OH_molec_per_cm3": 1.5e6,
+        "ippmprec_ppm": 0.500,
+        "temp_K": 298.0
+      }
+    },
+    {
+      "run_id": "cold",
+      "summary": "4-hour run at T = 273 K. Exercises the temperature dependence of Arrhenius-type rate constants in the SAPRC mechanism (kBL20 etc.).",
+      "params": {
+        "endtime_h": 4.000,
+        "OH_molec_per_cm3": 1.5e6,
+        "ippmprec_ppm": 0.050,
+        "temp_K": 273.0
+      }
+    },
+    {
+      "run_id": "hot",
+      "summary": "4-hour run at T = 323 K. Companion to the cold run; rate constants ~3-5x faster at the upper end of typical chamber temperatures.",
+      "params": {
+        "endtime_h": 4.000,
+        "OH_molec_per_cm3": 1.5e6,
+        "ippmprec_ppm": 0.050,
+        "temp_K": 323.0
+      }
+    }
+  ]
+}
