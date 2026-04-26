@@ -62,7 +62,7 @@ Each scientific chunk that ships data or numerical logic ships matplotlib figure
 
 | File | What it shows |
 |---|---|
-| [`docs/figures/c0.8/matrix_coverage.png`](docs/figures/c0.8/matrix_coverage.png) | Top: scatter of all 10 runs in the (endtime, OH) plane, marker size encoding GENVOC magnitude and colour encoding temperature. Bottom: GENVOC trajectory per run, drawn directly from the committed `_saprcgc.dat`. Shows the matrix covers 3 orders of magnitude in time, ~10× in OH dose, ~100× in initial VOC, and a 50 K temperature range. |
+| [`docs/figures/c0.8/matrix_coverage.png`](docs/figures/c0.8/matrix_coverage.png) | Top row: 4 small panels, one per axis the matrix sweeps (time, OH, VOC, T). Each panel shows the runs that vary along that axis as dots on a 1-D line, with `long_baseline` highlighted as a hollow centre dot in every panel where it appears. Numeric values labeled. Bottom: GENVOC(t) trajectories per run, colour-coded by family — blue=time, red=OH, green=VOC, purple=T, dashed black = long_baseline. Shows the matrix covers ~3 orders of magnitude in time (10 min → 24 h), ~10× in OH, ~100× in initial VOC, and a 50 K T range, all anchored on a shared 4-h baseline. |
 
 To regenerate: `python scripts/make_c0.6_figures.py`, `make_c0.7_figures.py`, `make_c0.8_figures.py` (requires `pip install -e ".[dev]"`).
 
