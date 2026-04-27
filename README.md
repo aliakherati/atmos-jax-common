@@ -36,6 +36,9 @@ Requires Python ≥ 3.11.
 | `atmos_jax_common.fortran_runner` | Subprocess wrapper: build `box.exe`, run with input, capture outputs | alpha (C0.4) |
 | `atmos_jax_common.goldens` | Parser/loader for `_gc.dat`, `_noconc.dat`, `_aemass.dat`, `_spec.dat`, `_saprcgc.dat` | alpha (C0.6) |
 | `atmos_jax_common.compare` | Tolerance-aware diff primitives (`relative_l2`, correlation, carbon balance) + `DiffReport` dataclass | alpha (C0.7) |
+| `atmos_jax_common.canonical_runs` | Typed loader + box.exe input renderer for `data/canonical_runs/manifest.json` (10-run gas-phase coverage matrix v0.1) | alpha (C0.8) |
+| `scripts/generate_goldens.py` | Build Fortran + run the matrix + commit reference outputs; `--check` mode for CI drift detection | alpha (C0.9) |
+| CI: `mechanism-drift` job | Regenerates goldens from `box.exe` and diffs vs committed (macOS-only until upstream Linux #1 lands) | alpha (C0.10) |
 
 Tracked in the master plan at `~/.claude/plans/enchanted-exploring-dewdrop.md` (owner's local) as chunks `C0.0` … `C0.10`.
 
@@ -55,7 +58,25 @@ Each scientific chunk that ships data or numerical logic ships matplotlib figure
 |---|---|
 | [`docs/figures/c0.7/diff_report_demo.png`](docs/figures/c0.7/diff_report_demo.png) | A synthetic Fortran-vs-JAX scenario: take the sample fixture as the reference, add a 5% bias to one species + 0.1% noise to the rest, render the resulting `DiffReport`. Top: per-species relative L2 with the master-plan tolerance line; the offending species highlighted red. Bottom: candidate-vs-reference overlay for the worst species. |
 
-To regenerate: `python scripts/make_c0.6_figures.py` and `python scripts/make_c0.7_figures.py` (requires `pip install -e ".[dev]"`).
+**C0.8 — canonical-run matrix**
+
+| File | What it shows |
+|---|---|
+| [`docs/figures/c0.8/matrix_coverage.png`](docs/figures/c0.8/matrix_coverage.png) | Top row: 4 small panels, one per axis the matrix sweeps (time, OH, VOC, T). Each panel shows the runs that vary along that axis as dots on a 1-D line, with `long_baseline` highlighted as a hollow centre dot in every panel where it appears. Numeric values labeled. Bottom: GENVOC(t) trajectories per run, colour-coded by family — blue=time, red=OH, green=VOC, purple=T, dashed black = long_baseline. Shows the matrix covers ~3 orders of magnitude in time (10 min → 24 h), ~10× in OH, ~100× in initial VOC, and a 50 K T range, all anchored on a shared 4-h baseline. |
+
+To regenerate: `python scripts/make_c0.6_figures.py`, `make_c0.7_figures.py`, `make_c0.8_figures.py` (requires `pip install -e ".[dev]"`).
+
+### Canonical-run matrix
+
+`data/canonical_runs/manifest.json` is the source of truth for the 10-run regression matrix. Outputs live under `data/canonical_runs/expected/<run_id>/`. To regenerate everything (requires gfortran + the Fortran submodule populated):
+
+```bash
+git submodule update --init --recursive
+python scripts/regenerate_canonical_inputs.py
+python scripts/generate_goldens.py
+```
+
+The CI `mechanism-drift` job runs `python scripts/generate_goldens.py --check` on macOS to detect any drift in the Fortran reference vs the committed goldens.
 
 ## Relationship to the Fortran reference
 
