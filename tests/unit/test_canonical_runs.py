@@ -18,6 +18,7 @@ from atmos_jax_common.canonical_runs import (
     CanonicalRun,
     RunOverrides,
     SharedParams,
+    default_expected_dir,
     default_inputs_dir,
     default_manifest_path,
     load_manifest,
@@ -159,6 +160,25 @@ def test_committed_inputs_match_manifest(matrix: CanonicalMatrix) -> None:
         assert committed_path.read_text(encoding="utf-8") == render_input(run, matrix.shared), (
             f"committed input {committed_path} drifted from manifest; "
             f"run scripts/regenerate_canonical_inputs.py to refresh."
+        )
+
+
+def test_default_expected_dir_resolves_to_committed_goldens(
+    matrix: CanonicalMatrix,
+) -> None:
+    """Every run in the matrix has a corresponding subdirectory under
+    ``default_expected_dir()`` containing Fortran-generated goldens
+    plus a ``metadata.json``. Verifies the
+    ``[tool.hatch.build.targets.wheel.force-include]`` packaging keeps
+    the data discoverable in both editable and wheel installs."""
+    expected_dir = default_expected_dir()
+    assert expected_dir.is_dir(), f"expected dir missing: {expected_dir}"
+    for run in matrix.runs:
+        run_dir = expected_dir / run.run_id
+        assert run_dir.is_dir(), f"missing golden dir: {run_dir}"
+        assert (run_dir / "metadata.json").is_file(), f"missing metadata.json in {run_dir}"
+        assert (run_dir / f"{run.run_id}_saprcgc.dat").is_file(), (
+            f"missing _saprcgc.dat in {run_dir}"
         )
 
 

@@ -54,6 +54,16 @@ Issues = "https://github.com/aliakherati/atmos-jax-common/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/atmos_jax_common"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# Ship the canonical-run matrix (manifest + inputs + Fortran-generated
+# goldens) inside the installed package so consumers (som-jax,
+# saprc-jax, tomas-jax) can load them after a regular `pip install
+# atmos-jax-common`. Without this, the data lives at repo root and is
+# only reachable from an editable / source install. The path inside
+# the wheel mirrors the repo layout, so `default_manifest_path()`
+# resolves cleanly in both modes.
+"data/canonical_runs" = "atmos_jax_common/_data/canonical_runs"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
