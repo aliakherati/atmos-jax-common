@@ -232,17 +232,59 @@ def write_input(run: CanonicalRun, shared: SharedParams, target: Path | str) -> 
 
 
 # --- defaults --------------------------------------------------------------
+#
+# The canonical-run matrix data ships in two layouts depending on how the
+# package was installed:
+#
+# - **Editable / source checkout**: data lives at repo root under
+#   ``data/canonical_runs/``. The path resolves as
+#   ``__file__/../../../data/canonical_runs/`` (parents[2] from
+#   ``src/atmos_jax_common/canonical_runs.py``).
+# - **Wheel install** (``pip install atmos-jax-common``): the data is
+#   force-included into the package as ``atmos_jax_common/_data/
+#   canonical_runs/`` (per the ``[tool.hatch.build.targets.wheel.force-include]``
+#   section of ``pyproject.toml``). The path resolves as
+#   ``__file__/../_data/canonical_runs/``.
+#
+# Helpers below probe both locations and return the first that exists.
+# Consumers (``som-jax``, ``saprc-jax``, ``tomas-jax``) use these paths
+# unchanged so the same code works in both layouts.
+
+
+def _canonical_runs_data_root() -> Path:
+    """Resolve the on-disk root for the canonical-run data, regardless
+    of editable-vs-wheel install mode."""
+    pkg_dir = Path(__file__).resolve().parent  # src/atmos_jax_common/
+    candidates = [
+        pkg_dir / "_data" / "canonical_runs",  # wheel install
+        pkg_dir.parents[1] / "data" / "canonical_runs",  # editable / source
+    ]
+    for c in candidates:
+        if c.is_dir():
+            return c
+    raise FileNotFoundError(
+        "Cannot locate the canonical-run data on disk. Looked at:\n"
+        + "\n".join(f"  - {c}" for c in candidates)
+    )
 
 
 def default_manifest_path() -> Path:
-    """Return the on-disk path to the committed manifest.
-
-    Resolves relative to this source file so the lookup works whether the
-    package is installed or in editable mode.
-    """
-    return Path(__file__).resolve().parents[2] / "data" / "canonical_runs" / "manifest.json"
+    """Return the on-disk path to the committed manifest."""
+    return _canonical_runs_data_root() / "manifest.json"
 
 
 def default_inputs_dir() -> Path:
     """Return the on-disk directory holding committed input files."""
-    return Path(__file__).resolve().parents[2] / "data" / "canonical_runs" / "inputs"
+    return _canonical_runs_data_root() / "inputs"
+
+
+def default_expected_dir() -> Path:
+    """Return the on-disk directory holding committed reference outputs.
+
+    Each canonical run has a subdirectory ``<run_id>/`` containing the
+    Fortran-generated ``.dat`` files plus a ``metadata.json`` recording
+    the input + Fortran-source SHAs at generation time. Use this together
+    with :func:`atmos_jax_common.goldens.load_golden_run` to load any
+    canonical run's reference trajectory.
+    """
+    return _canonical_runs_data_root() / "expected"
